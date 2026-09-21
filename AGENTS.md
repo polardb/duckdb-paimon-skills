@@ -15,32 +15,40 @@ If newer commits exist, summarize them and ask the user whether to update. If th
 
 ## Phase 1: Environment Check
 
-Follow `references/setup-guide.md` to detect the platform, find the latest duckdb-paimon release, ensure the matching DuckDB version is installed, and locate any existing extension installation.
+Follow `references/setup-guide.md` to detect the platform, locate or install DuckDB, and inspect the installed Paimon extension version and source.
 
 Outcomes:
-- **Extension already installed** — Skip to Phase 3.
+- **Extension already installed** — Verify that it loads with this DuckDB binary in Phase 2.
 - **Extension not installed** — Proceed to Phase 2.
 
-## Phase 2: Extension Download
+## Phase 2: Extension Installation & Loading
 
-Follow `references/setup-guide.md` Steps 3–4 to download and install the extension. Save the absolute path to `paimon.duckdb_extension` for Phase 3.
+Follow `references/setup-guide.md` to install from the community repository when needed and run `LOAD paimon;`. Record the verified DuckDB version, extension version, and installation source. A successful load is required even if an extension file already exists.
 
-## Phase 3: DuckDB Invocation & Catalog Attachment
+## Phase 3: Connection Selection & DuckDB Invocation
 
-Ask the user for their Paimon warehouse path, then run DuckDB non-interactively with unsigned extension support. For agent-driven work, use this fixed stdin-script pattern:
+Use connection details already provided by the user and ask only for missing information:
+
+- **Filesystem warehouse** — A local path, `oss://` URI, or `s3://` URI; attach it to browse databases and tables.
+- **Single table** — Identify its warehouse, database, and table, then attach the warehouse and query the catalog-qualified table name. If only a table path is provided, resolve its warehouse root from the layout or ask for the missing connection details.
+- **REST catalog** — The service URI, server-side warehouse identifier, and authentication source. The warehouse identifier is not a filesystem path.
+
+For OSS, S3, or REST, follow `references/remote-access.md`. Reuse an existing S3 credential chain/profile when available; request a local credential file only when needed. Load the extension before creating Paimon Secrets, then create Secrets before attaching the remote catalog.
+
+Run DuckDB non-interactively. After installation, use this stdin-script pattern for a local filesystem warehouse:
 
 ```bash
-duckdb -unsigned <<'SQL'
-LOAD '/absolute/path/to/paimon.duckdb_extension';
+duckdb <<'SQL'
+LOAD paimon;
 ATTACH '/path/to/warehouse' AS paimon_cat (TYPE paimon, READ_ONLY);
 .timer on
 -- analysis SQL statements go here
 SQL
 ```
 
-Use `READ_ONLY` by default to prevent accidental writes. Drop `READ_ONLY` only when the user explicitly intends to write data.
+Use `READ_ONLY` by default to prevent accidental writes. Drop `READ_ONLY` only when the user explicitly intends to write data and the installed version and catalog support the operation; see `references/sql-operations.md` for write limits.
 
-If the warehouse path starts with `oss://`, the user also needs to provide OSS credentials (AccessKey ID, AccessKey Secret, Endpoint). Ask the user to put them in a file (to keep credentials out of the conversation) and provide the file path. See `references/oss-access.md` for credential file format and attachment syntax.
+Each new DuckDB process needs `LOAD` and the relevant Secrets and attachments again. Retain the verified installation details across the conversation, but do not treat temporary Secrets or attached catalogs as persistent across processes.
 
 ### Verify
 
@@ -48,7 +56,7 @@ If the warehouse path starts with `oss://`, the user also needs to provide OSS c
 SHOW ALL TABLES;
 ```
 
-This should list the databases and tables in the warehouse. If empty, verify the warehouse path is correct and contains Paimon metadata (snapshot/manifest directories).
+For an attached catalog, this should list its databases and tables. If empty, verify the filesystem warehouse root and metadata beneath its table directories, or the REST warehouse identifier and catalog permissions.
 
 ## Phase 4: Schema Exploration
 
@@ -64,16 +72,16 @@ Present the schema information clearly before generating analysis queries. Under
 
 ## Phase 5: Query & Analysis
 
-Generate SQL queries based on the user's analysis requirements. See `references/sql-operations.md` for the complete syntax reference including time travel, snapshot inspection, write operations, and cross-format joins.
+Generate SQL queries based on the user's analysis requirements. See `references/sql-operations.md` for examples of catalog queries, time travel, snapshot inspection, write operations, and cross-format joins. These examples are not an exhaustive capability list; for a requested feature not covered here, consult the current upstream documentation and verify support in the installed extension.
 
 ### SQL Visibility Protocol
 
 For every SQL statement that is generated and executed on the user's behalf:
 
-1. Show the exact SQL to the user in a fenced `sql` code block before executing it.
-2. Execute only SQL that has already been shown, except for trivial session setup commands already documented in earlier phases.
+1. Show the exact SQL to the user in a fenced `sql` code block before executing it. For credential-bearing setup SQL only, replace sensitive values with explicit redaction placeholders; keep the remaining SQL visible.
+2. Execute only SQL that has already been shown, except for trivial session setup commands already documented in earlier phases. Credential substitution from the user's local configuration is the only permitted difference from displayed setup SQL; never print the substituted SQL or raw credentials.
 3. Report the `Run Time (s)` line printed by DuckDB for each analysis query. Do not use agent-side wall-clock timing as the query time.
-4. When presenting results, include an "Executed SQL" section that lists the statements used to produce those results. If several exploratory statements were run, include all of them in execution order.
+4. When presenting results, include an "Executed SQL" section that lists the statements used to produce those results. If several exploratory statements were run, include all of them in execution order. Preserve credential redaction in any setup SQL included there.
 5. If a statement must be changed after an error, show the revised SQL before running it.
 
 Do not summarize results from hidden ad hoc SQL. The user must be able to see which SQL produced each answer.
@@ -82,9 +90,8 @@ Do not summarize results from hidden ad hoc SQL. The user must be able to see wh
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Catalog Error: ... not allowed for unsigned extensions` | DuckDB not started with `-unsigned` | Re-run the stdin script with `duckdb -unsigned`, including the `LOAD` statement before the query SQL |
+| Community installation unavailable | Unsupported DuckDB version/platform, or repository/network failure | Check `references/setup-guide.md`; distinguish missing builds from network errors before choosing a compatible version or resolving connectivity |
 | `Extension ... version mismatch` | DuckDB version != extension build version | Re-run Phase 1 to verify version alignment |
-| `Failed to load ... libpaimon.dylib` | Companion shared libraries missing | Re-extract the release tarball; don't move `paimon.duckdb_extension` out of its directory |
-| `SHOW ALL TABLES` returns empty | Wrong warehouse path, or not a Paimon warehouse | Verify path contains `snapshot/` and `manifest/` subdirectories |
-| `OSS access denied` | Wrong credentials or permissions | See `references/oss-access.md` troubleshooting section |
-| `Table scan returns 0 rows` | Querying wrong snapshot or empty table | Use `paimon_snapshots()` to verify table has data |
+| `SHOW ALL TABLES` returns empty | Wrong warehouse, missing table metadata, or catalog permissions | Check filesystem table directories or the REST warehouse identifier and permissions |
+| Remote access denied | Wrong credential scope, expired credentials, endpoint, or permissions | See `references/remote-access.md` troubleshooting section |
+| `Table scan returns 0 rows` | Querying wrong snapshot or empty table | Check the selected snapshot and filters; use `paimon_snapshots()` for filesystem tables |

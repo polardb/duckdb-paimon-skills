@@ -7,8 +7,9 @@ This repository contains the `duckdb-paimon-analyze` skill, a reusable skill for
 ## What It Does
 
 - Checks the local DuckDB and duckdb-paimon environment.
-- Loads the matching duckdb-paimon extension.
-- Attaches local or OSS-backed Paimon warehouses.
+- Installs and loads the Paimon extension from DuckDB's community repository.
+- Attaches local, OSS, or S3 filesystem warehouses and REST catalogs.
+- Queries tables through attached catalogs, including for single-table analysis.
 - Explores tables, schemas, snapshots, and sample rows.
 - Helps produce analysis SQL with read-only access by default.
 
@@ -20,10 +21,14 @@ It is intended for workflows such as schema discovery, snapshot inspection, time
 
 ## Documentation
 
-See the repository documentation files for setup, workflow, SQL operations, and OSS access details.
+- [SKILL.md](SKILL.md) — Skill entry point and reference routing.
+- [AGENTS.md](AGENTS.md) — Agent workflow and SQL visibility protocol.
+- [Environment setup](references/setup-guide.md) — Community installation and version verification.
+- [Remote access](references/remote-access.md) — OSS, S3, and REST catalog configuration.
+- [SQL operations](references/sql-operations.md) — Queries, snapshots, time travel, and write operations.
 
 ## Safety
 
 The workflow attaches warehouses as read-only by default. Write access should only be enabled when the user explicitly intends to modify data.
 
-Do not paste OSS credentials into conversation history. Store credentials in a local file and provide only the file path to the agent.
+Reuse an existing S3 credential chain/profile where available. For static object storage credentials or REST tokens, provide a local credential file path instead of pasting secrets into conversation history. Display credential-bearing SQL with sensitive values redacted.
